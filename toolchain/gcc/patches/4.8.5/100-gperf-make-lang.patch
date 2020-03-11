@@ -1,0 +1,11 @@
+--- a/gcc/cp/Make-lang.in	2020-03-11 23:02:39.797358954 +0000
++++ b/gcc/cp/Make-lang.in	2020-03-11 23:03:11.045388755 +0000
+@@ -115,7 +115,7 @@
+ # deleting the $(srcdir)/cp/cfns.h file.
+ $(srcdir)/cp/cfns.h:
+ endif
+-	gperf -o -C -E -k '1-6,$$' -j1 -D -N 'libc_name_p' -L ANSI-C \
++	gperf -o -C -E -k '1-6,$$' -j1 -D -N 'libc_name_p' -L C++ \
+ 		$(srcdir)/cp/cfns.gperf --output-file $(srcdir)/cp/cfns.h
+ 
+ #
