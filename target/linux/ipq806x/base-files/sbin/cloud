@@ -1,0 +1,158 @@
+#!/bin/sh
+
+https_url="https://http.fw.updates1.netgear.com/sw-apps/ready-genie-cloud/r7800"
+ftp_url="ftp://updates1.netgear.com/sw-apps/ready-genie-cloud/r7800"
+version=`cat /cloud_version`
+sleep_time_1=60
+sleep_time_2=300
+sleep_time_3=600
+sleep_time_4=1800
+sleep_time_5=3600
+
+dynamic_sleep() {
+	if [ $retry_count -lt 5 ]; then
+		let retry_count=$retry_count+1
+	fi
+	eval sleep_time=\$sleep_time_$retry_count
+	sleep $sleep_time
+}
+
+start() {
+	[ -d /opt ] && {
+		/opt/xagent/run-xagent.sh
+		/www/cgi-bin/readycloud_control.cgi
+		sleep 2
+		readycloud_enable=$(/bin/config get readycloud_enable)
+		if [ "$readycloud_enable" = "1" ]; then
+			readycloud_user_admim="$(/bin/config get readycloud_user_admin)"
+			readycloud_user_passsword="$(/bin/config get readycloud_user_password)"
+			./opt/rcagent/scripts/register.sh $readycloud_user_admim $readycloud_user_passsword
+		fi
+	}
+}
+
+uninstall() {
+	[ -s /opt/filelist ] && cat /opt/filelist | xargs rm -f
+	rm -rf /opt
+}
+
+checkversion() {
+	[ -d /opt ] || return 1
+	[ "x$(grep $version /opt/version)" = "x" ] && uninstall
+}
+
+backup() {
+	[ -s /overlay/opt/filelist ] || return 1
+	while read file; do
+		target="/tmp/clouddir$(dirname $file)"
+		mkdir -p $target
+		cp -f $file $target
+	done < /overlay/opt/filelist
+}
+
+restore() {
+	[ -d /tmp/clouddir ] || return 1
+	cp -fpR /tmp/clouddir/overlay/* /overlay
+	rm -rf /tmp/clouddir
+}
+
+install_local(){
+	tar -zxvf /lib/readygeniecloud-r7800new-20170719-01.tar.gz -C /
+	echo 20170719 > /opt/version
+	sed '2s/^/source \/etc\/profile\n/' /opt/rcagent/run_server.sh > /tmp/run_server.sh
+	cp /tmp/run_server.sh /opt/rcagent/run_server.sh
+
+	start
+}
+
+update() {
+#	local cloud_binary_install=$(/bin/config get cloud_binary_install)
+	[ -f /tmp/.cloud_updated ] && return 1
+	PID_file=/var/run/cloud.pid
+	[ -f $PID_file ] && return 1
+#	install_local
+	echo "$$" > $PID_file
+	retry_count=0
+	while [ 1 ]; do
+		echo "start to get info from $https_url"
+		curl -L -k $https_url/fileinfo.txt -o /tmp/cloud_info 2>/dev/null
+		url_way="https"
+		[ -s /tmp/cloud_info ] && break
+		echo "cannot $https_url/ or don't find readygeniecloud tarball with version $version"
+
+		echo "start to get info from $ftp_url"
+		curl $ftp_url/fileinfo.txt -o /tmp/cloud_info 2>/dev/null
+		url_way="ftp"
+		[ -s /tmp/cloud_info ] && break
+		echo "cannot access $ftp_url/ or don't find readygeniecloud tarball with version $version"
+		dynamic_sleep
+	done
+	ssl_version=`openssl version | awk '{print $2}'`
+	fullversion=`cat /tmp/cloud_info | grep $ssl_version | awk '{print $1'}`
+	md5value=`cat /tmp/cloud_info | grep $ssl_version | awk '{print $3}'`
+	#size=`tail -1 /tmp/cloud_info | awk '{print $5}'`
+	if [ -f /opt/version ]; then
+		current_version=`cat /opt/version | cut -d "-" -f 3`
+		server_version=`echo $fullversion | cut -d "-" -f 3`
+		if [ $server_version -le $current_version ];then
+			rm -f /tmp/cloud_info
+			touch /tmp/.cloud_updated
+			#rm -f $PID_file
+			echo "the readygeniecloud on update server is older than or same as on R/W filesystem"
+			start
+			return 1
+		fi
+	fi
+	echo "start to download sw-apps/ready-genie-cloud/r7800/$fullversion"
+	retry_count=0
+	while [ 1 ]; do
+		if [ "x$url_way" = "xftp" ]; then
+			curl $ftp_url/$fullversion -o /tmp/cloud.tar.gz 2>/dev/null
+			[ "$(md5sum /tmp/cloud.tar.gz | awk '{print $1}')" = "$md5value" ] && break
+			echo "fail to download $ftp_url/$fullversion"
+		elif [ "x$url_way" = "xhttps" ]; then
+			curl -L -k $https_url/$fullversion -o /tmp/cloud.tar.gz 2>/dev/null
+			[ "$(md5sum /tmp/cloud.tar.gz | awk '{print $1}')" = "$md5value" ] && break
+			echo "fail to download $https_url/$fullversion"
+		fi
+		dynamic_sleep
+	done
+	uninstall
+	mkdir /tmp/clouddir
+	tar xfz /tmp/cloud.tar.gz -C /tmp/clouddir
+	echo $fullversion > /tmp/clouddir/opt/version
+	touch /tmp/clouddir/opt/filelist
+	find /tmp/clouddir -type f | sed 's/\/tmp\/clouddir/\/overlay/' > /tmp/clouddir/opt/filelist
+	cp -fpR /tmp/clouddir/* /
+	rm -f /tmp/cloud_info
+	rm -f /tmp/cloud.tar.gz
+	rm -rf /tmp/clouddir
+	touch /tmp/.cloud_updated
+	# add newline "source /etc/profile" in file /opt/rcagent/run_server.sh
+	sed '2s/^/source \/etc\/profile\n/' /opt/rcagent/run_server.sh > /tmp/run_server.sh
+	cp /tmp/run_server.sh /opt/rcagent/run_server.sh
+
+	echo $fullversion | cut -d - -f 3 > /cloud_version
+	echo "install ftp://updates1.netgear.com/sw-apps/ready-genie-cloud/r7800/$fullversion to R/W filesystem successfully"
+	start
+	rm -f $PID_file
+}
+
+case "$1" in
+	start)
+	start
+	;;
+	backup)
+	backup
+	;;
+	restore)
+	restore
+	;;
+	checkversion)
+	checkversion
+	;;
+	update)
+	update
+	;;
+esac
+
