@@ -1,0 +1,12 @@
+--- a/include/sys/types.h	2020-03-12 01:02:58.464303306 +0000
++++ b/include/sys/types.h	2020-03-12 01:07:20.576556471 +0000
+@@ -224,7 +224,8 @@
+ #endif /* Use BSD.  */
+ 
+ 
+-#if defined __USE_UNIX98 && !defined __blksize_t_defined
++#if (defined __USE_UNIX98 || defined __USE_XOPEN2K8) \
++	&& !defined __blksize_t_defined
+ typedef __blksize_t blksize_t;
+ # define __blksize_t_defined
+ #endif
